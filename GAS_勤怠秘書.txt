@@ -1,0 +1,101 @@
+function createGmailDraftFromLatestDoc() {
+  var folderName = "勤怠連絡";
+  var folders = DriveApp.getFoldersByName(folderName);
+  var destFolder = folders.hasNext() ? folders.next() : null;
+  
+  var files = DriveApp.getFilesByType(MimeType.GOOGLE_DOCS);
+  if (!files.hasNext()) return;
+
+  var latestFile = files.next();
+  var fileName = latestFile.getName();
+  if (fileName.indexOf("【済】") !== -1) return;
+
+  var doc = DocumentApp.openById(latestFile.getId());
+  var text = doc.getBody().getText();
+  
+  var to = "";
+  var subject = "";
+  var bodyContent = "";
+
+  // 1. 宛先(To:)
+  var toMatch = text.match(/To\s*[:：]\s*([^\s]+@[^\s]+)/i);
+  if (toMatch) to = toMatch[1].trim();
+
+  // 2. 件名(Subject:)
+  var subjectMatch = text.match(/Subject\s*[:：]\s*(.*?)---/i);
+  if (subjectMatch) {
+    subject = subjectMatch[1].trim();
+  } else {
+    subject = fileName; 
+  }
+
+  // 3. 本文の抽出
+  var bodyMatch = text.match(/---[\s\S]*?---([\s\S]*?)---/);
+  if (bodyMatch) {
+    bodyContent = bodyMatch[1].trim();
+  } else {
+    bodyContent = text.split("---").slice(-2, -1)[0] || "";
+  }
+
+  var formattedContent = bodyContent.replace(/・/g, "\n・").trim();
+
+  // 4. 【追加機能】Googleカレンダーへの登録
+  if (subject) {
+    var calendar = CalendarApp.getDefaultCalendar();
+    // 件名から日付(YYYY/MM/DD)を抽出
+    var dateMatch = subject.match(/(\d{4}\/\d{2}\/\d{2})/);
+    
+    if (dateMatch) {
+      var dateStr = dateMatch[1];
+      var startTime, endTime, eventTitle;
+
+      // 判定ロジック
+      if (subject.indexOf("全休") !== -1) {
+        startTime = new Date(dateStr + " 09:00:00");
+        endTime = new Date(dateStr + " 19:00:00");
+        eventTitle = "有給休暇（後藤）";
+      } else if (subject.indexOf("午前") !== -1) {
+        startTime = new Date(dateStr + " 09:00:00");
+        endTime = new Date(dateStr + " 14:00:00");
+        eventTitle = "午前半休（後藤）";
+      } else if (subject.indexOf("午後") !== -1) {
+        startTime = new Date(dateStr + " 14:00:00");
+        endTime = new Date(dateStr + " 19:00:00");
+        eventTitle = "午後半休（後藤）";
+      }
+
+      // 条件に合致すればカレンダー登録
+      if (startTime && endTime) {
+        try {
+          calendar.createEvent(eventTitle, startTime, endTime);
+          console.log("✅ カレンダー登録成功: " + eventTitle);
+        } catch (e) {
+          console.log("⚠️ カレンダー登録失敗: " + e.toString());
+        }
+      }
+    }
+  }
+
+  // 5. フォーマット組み立てと送信
+  var finalBody = 
+    "関係者各位\n\n" +
+    "お疲れ様です。後藤です。\n\n" +
+    "--------------------------------------------------\n" +
+    formattedContent + "\n" +
+    "--------------------------------------------------\n\n" +
+    "以上、よろしくお願いいたします。";
+
+  if (to && (fileName.indexOf("勤怠") !== -1 || subject.indexOf("勤怠") !== -1)) {
+    try {
+      GmailApp.sendEmail(to, subject, finalBody);
+      latestFile.setName("【済】" + fileName);
+      if (destFolder) {
+        destFolder.addFile(latestFile);
+        DriveApp.getRootFolder().removeFile(latestFile);
+      }
+      console.log("✅ 本文を含めて送信成功");
+    } catch (e) {
+      console.log("❌ エラー: " + e.toString());
+    }
+  }
+}
